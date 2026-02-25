@@ -1,0 +1,15 @@
+{
+  "name": "express-cognito-backend",
+  "version": "1.0.0",
+  "description": "Express.js backend for AWS Cognito operations.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-cognito-identity-provider": "^3.58.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.0.3",
+    "express": "^4.18.2"
+  }
+}
