@@ -12,6 +12,10 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
+app.get('/', (req, res) => {
+  res.send('Server is active');
+});
+
 // Validate environment variables
 const requiredEnvVars = ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_REGION', 'COGNITO_CLIENT_ID'];
 const missingEnvVars = requiredEnvVars.filter(envVar => !process.env[envVar]);
