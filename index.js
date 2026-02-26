@@ -1,8 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const { 
-  CognitoIdentityProviderClient, 
+const {  CognitoIdentityProviderClient, 
   SignUpCommand, 
   ConfirmSignUpCommand, 
   InitiateAuthCommand 
@@ -12,8 +11,12 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
+// Health check endpoint
 app.get('/', (req, res) => {
-  res.send('Server is active');
+  res.status(200).json({ 
+    message: 'Express Cognito Backend is running',
+    timestamp: new Date().toISOString()
+  });
 });
 
 // Validate environment variables
@@ -32,32 +35,22 @@ const cognitoClient = new CognitoIdentityProviderClient({
   },
 });
 
-// Health check endpoint
-app.get('/', (req, res) => {
-  res.status(200).json({ 
-    message: 'Express Cognito Backend is running',
-    timestamp: new Date().toISOString()
-  });
-});
-
 // Signup endpoint - POST /auth/signup
-// Body: { username, password, email, name }
 app.post('/auth/signup', async (req, res) => {
-  const { username, password, email, name } = req.body;
+  let { username, password, email, name } = req.body;
 
-  // Input validation
   if (!username || !password || !email || !name) {
     return res.status(400).json({ error: 'Username, password, email, and name are required.' });
   }
 
   const params = {
     ClientId: process.env.COGNITO_CLIENT_ID,
-    Username: username,
+    Username: String(username).trim(),
     Password: password,
     UserAttributes: [
-      { Name: 'email', Value: email },
-      { Name: 'name', Value: name },
-      { Name: 'custom:username', Value: username },
+      { Name: 'email', Value: String(email).trim().toLowerCase() },
+      { Name: 'name', Value: String(name).trim() },
+      { Name: 'custom:username', Value: String(username).trim() },
     ],
   };
 
@@ -70,8 +63,6 @@ app.post('/auth/signup', async (req, res) => {
     });
   } catch (error) {
     console.error('Error during sign up:', error);
-    
-    // Provide user-friendly error messages
     let errorMessage = 'An error occurred during signup.';
     if (error.name === 'UsernameExistsException') {
       errorMessage = 'Username already exists.';
@@ -80,25 +71,22 @@ app.post('/auth/signup', async (req, res) => {
     } else if (error.name === 'InvalidParameterException') {
       errorMessage = 'Invalid input parameters.';
     }
-    
     res.status(400).json({ error: errorMessage });
   }
 });
 
 // Verify endpoint - POST /auth/verify
-// Body: { username, otp }
 app.post('/auth/verify', async (req, res) => {
-  const { username, otp } = req.body;
+  let { username, otp } = req.body;
 
-  // Input validation
   if (!username || !otp) {
     return res.status(400).json({ error: 'Username and OTP are required.' });
   }
 
   const params = {
     ClientId: process.env.COGNITO_CLIENT_ID,
-    Username: username,
-    ConfirmationCode: otp,
+    Username: String(username).trim(),
+    ConfirmationCode: String(otp).trim(), // 🔥 FIX: Ensures leading zeros are kept and whitespace removed
   };
 
   try {
@@ -107,8 +95,6 @@ app.post('/auth/verify', async (req, res) => {
     res.status(200).json({ message: 'User verified successfully.' });
   } catch (error) {
     console.error('Error during verification:', error);
-    
-    // Provide user-friendly error messages
     let errorMessage = 'An error occurred during verification.';
     if (error.name === 'CodeMismatchException') {
       errorMessage = 'Invalid OTP. Please check and try again.';
@@ -119,18 +105,14 @@ app.post('/auth/verify', async (req, res) => {
     } else if (error.name === 'NotAuthorizedException') {
       errorMessage = 'User is already confirmed.';
     }
-    
     res.status(400).json({ error: errorMessage });
   }
 });
 
 // Login endpoint - POST /auth/login
-// Body: { username, password }
-// Returns: { idToken, accessToken, refreshToken, user }
 app.post('/auth/login', async (req, res) => {
-  const { username, password } = req.body;
+  let { username, password } = req.body;
 
-  // Input validation
   if (!username || !password) {
     return res.status(400).json({ error: 'Username and password are required.' });
   }
@@ -139,7 +121,7 @@ app.post('/auth/login', async (req, res) => {
     AuthFlow: 'USER_PASSWORD_AUTH',
     ClientId: process.env.COGNITO_CLIENT_ID,
     AuthParameters: {
-      USERNAME: username,
+      USERNAME: String(username).trim(),
       PASSWORD: password,
     },
   };
@@ -149,9 +131,7 @@ app.post('/auth/login', async (req, res) => {
     const { AuthenticationResult } = await cognitoClient.send(command);
     
     if (AuthenticationResult) {
-      // Decode ID Token to get user attributes (custom:username, sub, etc.)
       const idTokenPayload = JSON.parse(Buffer.from(AuthenticationResult.IdToken.split('.')[1], 'base64').toString());
-      
       res.status(200).json({
         message: 'Login successful',
         idToken: AuthenticationResult.IdToken,
@@ -167,11 +147,8 @@ app.post('/auth/login', async (req, res) => {
     } else {
         res.status(400).json({ error: 'Login failed. Please check your credentials.' });
     }
-
   } catch (error) {
     console.error('Error during login:', error);
-    
-    // Provide user-friendly error messages
     let errorMessage = 'An error occurred during login.';
     if (error.name === 'UserNotConfirmedException') {
       errorMessage = 'User account is not confirmed. Please verify your email.';
@@ -180,7 +157,6 @@ app.post('/auth/login', async (req, res) => {
     } else if (error.name === 'UserNotFoundException') {
       errorMessage = 'User does not exist.';
     }
-    
     res.status(400).json({ error: errorMessage });
   }
 });
