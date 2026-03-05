@@ -4,7 +4,9 @@ const cors = require('cors');
 const {  CognitoIdentityProviderClient, 
   SignUpCommand, 
   ConfirmSignUpCommand, 
-  InitiateAuthCommand 
+  InitiateAuthCommand,
+  ForgotPasswordCommand,
+  ConfirmForgotPasswordCommand
 } = require('@aws-sdk/client-cognito-identity-provider');
 
 const app = express();
@@ -156,6 +158,82 @@ app.post('/auth/login', async (req, res) => {
       errorMessage = 'Invalid username or password.';
     } else if (error.name === 'UserNotFoundException') {
       errorMessage = 'User does not exist.';
+    }
+    res.status(400).json({ error: errorMessage });
+  }
+});
+
+// Forgot Password endpoint - POST /auth/forgot-password
+app.post('/auth/forgot-password', async (req, res) => {
+  let { username } = req.body;
+
+  if (!username) {
+    return res.status(400).json({ error: 'Username is required.' });
+  }
+
+  const params = {
+    ClientId: process.env.COGNITO_CLIENT_ID,
+    Username: String(username).trim(),
+  };
+
+  try {
+    const command = new ForgotPasswordCommand(params);
+    await cognitoClient.send(command);
+    res.status(200).json({
+      message: 'Password reset code sent to your registered email. Please check your email for the reset code.',
+    });
+  } catch (error) {
+    console.error('Error during forgot password:', error);
+    let errorMessage = 'An error occurred during password reset request.';
+    if (error.name === 'UserNotFoundException') {
+      errorMessage = 'User does not exist.';
+    } else if (error.name === 'InvalidParameterException') {
+      errorMessage = 'Invalid input parameters.';
+    } else if (error.name === 'LimitExceededException') {
+      errorMessage = 'Too many attempts. Please try again later.';
+    } else if (error.name === 'UserNotConfirmedException') {
+      errorMessage = 'User account is not confirmed. Please verify your email first.';
+    }
+    res.status(400).json({ error: errorMessage });
+  }
+});
+
+// Confirm Forgot Password endpoint - POST /auth/confirm-forgot-password
+app.post('/auth/confirm-forgot-password', async (req, res) => {
+  let { username, otp, newPassword } = req.body;
+
+  if (!username || !otp || !newPassword) {
+    return res.status(400).json({ error: 'Username, OTP, and new password are required.' });
+  }
+
+  const params = {
+    ClientId: process.env.COGNITO_CLIENT_ID,
+    Username: String(username).trim(),
+    ConfirmationCode: String(otp).trim(),
+    Password: newPassword,
+  };
+
+  try {
+    const command = new ConfirmForgotPasswordCommand(params);
+    await cognitoClient.send(command);
+    res.status(200).json({
+      message: 'Password reset successfully. You can now log in with your new password.',
+    });
+  } catch (error) {
+    console.error('Error during confirm forgot password:', error);
+    let errorMessage = 'An error occurred during password reset.';
+    if (error.name === 'CodeMismatchException') {
+      errorMessage = 'Invalid reset code. Please check and try again.';
+    } else if (error.name === 'ExpiredCodeException') {
+      errorMessage = 'Reset code has expired. Please request a new one.';
+    } else if (error.name === 'UserNotFoundException') {
+      errorMessage = 'User does not exist.';
+    } else if (error.name === 'InvalidPasswordException') {
+      errorMessage = 'Password does not meet the required complexity.';
+    } else if (error.name === 'LimitExceededException') {
+      errorMessage = 'Too many attempts. Please try again later.';
+    } else if (error.name === 'InvalidParameterException') {
+      errorMessage = 'Invalid input parameters.';
     }
     res.status(400).json({ error: errorMessage });
   }
