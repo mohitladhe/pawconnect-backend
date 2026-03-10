@@ -1,13 +1,31 @@
+
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const {  CognitoIdentityProviderClient, 
-  SignUpCommand, 
-  ConfirmSignUpCommand, 
+const {
+  CognitoIdentityProviderClient,
+  SignUpCommand,
+  ConfirmSignUpCommand,
   InitiateAuthCommand,
   ForgotPasswordCommand,
   ConfirmForgotPasswordCommand
 } = require('@aws-sdk/client-cognito-identity-provider');
+const admin = require('firebase-admin');
+
+// Initialize Firebase Admin SDK using the local service account file.
+// This avoids relying on the GOOGLE_APPLICATION_CREDENTIALS env var
+// and works consistently on Render/Vercel when the file is deployed securely.
+try {
+  const serviceAccount = require('./firebase-service-account.json');
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+    databaseURL: `https://${process.env.FIREBASE_PROJECT_ID}-default-rtdb.firebaseio.com`
+  });
+  console.log('Firebase Admin SDK initialized successfully using service account file.');
+} catch (error) {
+  console.error('Firebase Admin SDK initialization error:', error);
+  process.exit(1);
+}
 
 const app = express();
 app.use(express.json());
@@ -15,14 +33,14 @@ app.use(cors());
 
 // Health check endpoint
 app.get('/', (req, res) => {
-  res.status(200).json({ 
+  res.status(200).json({
     message: 'Express Cognito Backend is running',
     timestamp: new Date().toISOString()
   });
 });
 
 // Validate environment variables
-const requiredEnvVars = ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_REGION', 'COGNITO_CLIENT_ID'];
+const requiredEnvVars = ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_REGION', 'COGNITO_CLIENT_ID', 'FIREBASE_PROJECT_ID'];
 const missingEnvVars = requiredEnvVars.filter(envVar => !process.env[envVar]);
 if (missingEnvVars.length > 0) {
   console.error(`Missing required environment variables: ${missingEnvVars.join(', ')}`);
@@ -39,10 +57,14 @@ const cognitoClient = new CognitoIdentityProviderClient({
 
 // Signup endpoint - POST /auth/signup
 app.post('/auth/signup', async (req, res) => {
-  let { username, password, email, name } = req.body;
+  let { username, password, email, name, role, specialization } = req.body;
 
-  if (!username || !password || !email || !name) {
-    return res.status(400).json({ error: 'Username, password, email, and name are required.' });
+  if (!username || !password || !email || !name || !role) {
+    return res.status(400).json({ error: 'Username, password, email, name, and role are required.' });
+  }
+  
+  if (role === 'Vet' && !specialization) {
+    return res.status(400).json({ error: 'Specialization is required for Vets.' });
   }
 
   const params = {
@@ -53,14 +75,34 @@ app.post('/auth/signup', async (req, res) => {
       { Name: 'email', Value: String(email).trim().toLowerCase() },
       { Name: 'name', Value: String(name).trim() },
       { Name: 'custom:username', Value: String(username).trim() },
+      { Name: 'custom:role', Value: String(role).trim() },
     ],
   };
 
   try {
     const command = new SignUpCommand(params);
     const response = await cognitoClient.send(command);
+
+    // After successful signup, immediately sync user to Firebase
+    const userMap = {
+        userId: response.UserSub,
+        username: String(username).trim(),
+        email: String(email).trim().toLowerCase(),
+        fullName: String(name).trim(),
+        profileImage: "",
+        role: String(role).trim(),
+    };
+
+    if (userMap.role === 'Vet') {
+        userMap.specialization = String(specialization || '').trim();
+    }
+    
+    const db = admin.database();
+    const ref = db.ref(`Users/${userMap.username}`);
+    await ref.update(userMap);
+
     res.status(200).json({
-      message: 'User signed up successfully. Please check your email for the verification code.',
+      message: 'User signed up and synced successfully. Please check your email for the verification code.',
       userSub: response.UserSub,
     });
   } catch (error) {
@@ -88,7 +130,7 @@ app.post('/auth/verify', async (req, res) => {
   const params = {
     ClientId: process.env.COGNITO_CLIENT_ID,
     Username: String(username).trim(),
-    ConfirmationCode: String(otp).trim(), // 🔥 FIX: Ensures leading zeros are kept and whitespace removed
+    ConfirmationCode: String(otp).trim(),
   };
 
   try {
@@ -144,6 +186,7 @@ app.post('/auth/login', async (req, res) => {
           email: idTokenPayload.email,
           sub: idTokenPayload.sub,
           name: idTokenPayload.name,
+          role: idTokenPayload['custom:role'],
         },
       });
     } else {
