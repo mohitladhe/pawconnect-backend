@@ -3,3 +3,5 @@ node_modules/
 .env.local
 .DS_Store
 npm-debug.log*
+firebase-service-account.json
+firebase-service-account.b64.txt

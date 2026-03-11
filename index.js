@@ -9,6 +9,7 @@ const {
   ForgotPasswordCommand,
   ConfirmForgotPasswordCommand,
 } = require("@aws-sdk/client-cognito-identity-provider");
+const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
 const admin = require("firebase-admin");
 
 // Initialize Firebase Admin SDK using the local service account file.
@@ -23,7 +24,9 @@ try {
 
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
-    databaseURL: process.env.FIREBASE_DB_URL || `https://${process.env.FIREBASE_PROJECT_ID}-default-rtdb.firebaseio.com`,
+    databaseURL:
+      process.env.FIREBASE_DB_URL ||
+      `https://${process.env.FIREBASE_PROJECT_ID}-default-rtdb.firebaseio.com`,
   });
   console.log(
     "Firebase Admin SDK initialized successfully using service account file.",
@@ -69,16 +72,23 @@ const cognitoClient = new CognitoIdentityProviderClient({
   },
 });
 
+// S3 client for uploading pet images (will use AWS creds from env)
+const s3Client = new S3Client({
+  region: process.env.AWS_REGION,
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  },
+});
+
 // Signup endpoint - POST /auth/signup
 app.post("/auth/signup", async (req, res) => {
   let { username, password, email, name, role, specialization } = req.body;
 
   if (!username || !password || !email || !name || !role) {
-    return res
-      .status(400)
-      .json({
-        error: "Username, password, email, name, and role are required.",
-      });
+    return res.status(400).json({
+      error: "Username, password, email, name, and role are required.",
+    });
   }
 
   if (role === "Vet" && !specialization) {
@@ -331,15 +341,58 @@ app.post("/pets", async (req, res) => {
       breed,
       vaccinated,
       lastVaccination,
+      imageBase64,
     } = req.body || {};
 
     if (!username || !petName || !type || !age) {
-      return res.status(400).json({ error: "username, petName, type and age are required." });
+      return res
+        .status(400)
+        .json({ error: "username, petName, type and age are required." });
     }
 
     const db = admin.database();
     const petRef = db.ref(`Pets/${String(username).trim()}`);
     const newRef = petRef.push();
+    // If an image was supplied as base64 (optionally data URL), upload to S3 first
+    let imageUrl = "";
+    try {
+      if (imageBase64) {
+        let base64Data = imageBase64;
+        let contentType = "image/jpeg";
+        const dataUrlMatch = String(base64Data).match(
+          /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/,
+        );
+        if (dataUrlMatch) {
+          contentType = dataUrlMatch[1];
+          base64Data = dataUrlMatch[2];
+        }
+
+        const buffer = Buffer.from(base64Data, "base64");
+        const ext = (contentType.split("/")[1] || "jpg").split("+")[0];
+        const bucket =
+          process.env.PETS_S3_BUCKET ||
+          process.env.S3_BUCKET ||
+          "pawconnect-profile-images";
+        const key = `pets/${String(username).trim()}_${Date.now()}.${ext}`;
+
+        const putParams = {
+          Bucket: bucket,
+          Key: key,
+          Body: buffer,
+          ContentType: contentType,
+          ACL: "public-read",
+        };
+
+        await s3Client.send(new PutObjectCommand(putParams));
+
+        // Construct a public URL for the uploaded object
+        const region = process.env.AWS_REGION || "us-east-1";
+        imageUrl = `https://${bucket}.s3.${region}.amazonaws.com/${key}`;
+      }
+    } catch (uploadErr) {
+      console.error("S3 upload failed:", uploadErr);
+      // proceed without image URL but log the error
+    }
 
     const petData = {
       petName: String(petName).trim(),
@@ -347,13 +400,16 @@ app.post("/pets", async (req, res) => {
       age: String(age).trim(),
       breed: breed ? String(breed).trim() : "",
       vaccinated: Boolean(vaccinated),
+      imageUrl: imageUrl,
       lastVaccination: lastVaccination ? String(lastVaccination).trim() : "",
       createdAt: Date.now(),
     };
 
     await newRef.set(petData);
 
-    res.status(200).json({ message: "Pet saved successfully.", key: newRef.key });
+    res
+      .status(200)
+      .json({ message: "Pet saved successfully.", key: newRef.key, imageUrl });
   } catch (error) {
     console.error("Error saving pet:", error);
     res.status(500).json({ error: "Failed to save pet." });
