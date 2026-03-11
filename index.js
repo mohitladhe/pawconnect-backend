@@ -14,6 +14,7 @@ const admin = require("firebase-admin");
 // Initialize Firebase Admin SDK using the local service account file.
 // This avoids relying on the GOOGLE_APPLICATION_CREDENTIALS env var
 // and works consistently on Render/Vercel when the file is deployed securely.
+// Initialize Firebase Admin SDK using either a base64-encoded service
 try {
   const saB64 = process.env.FIREBASE_SERVICE_ACCOUNT_B64;
   const serviceAccount = saB64
@@ -22,7 +23,7 @@ try {
 
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
-    databaseURL: process.env.FIREBASE_DB_URL,
+    databaseURL: process.env.FIREBASE_DB_URL || `https://${process.env.FIREBASE_PROJECT_ID}-default-rtdb.firebaseio.com`,
   });
   console.log(
     "Firebase Admin SDK initialized successfully using service account file.",
@@ -39,7 +40,7 @@ app.use(cors());
 // Health check endpoint
 app.get("/", (req, res) => {
   res.status(200).json({
-    message: "Express Cognito Backend is running",
+    message: "PawConnect Backend is running",
     timestamp: new Date().toISOString(),
   });
 });
@@ -315,6 +316,47 @@ app.post("/auth/confirm-forgot-password", async (req, res) => {
       errorMessage = "Invalid input parameters.";
     }
     res.status(400).json({ error: errorMessage });
+  }
+});
+
+// Add Pet endpoint - POST /pets
+// Expects JSON: { username, petName, type, age, breed, vaccinated, lastVaccination }
+app.post("/pets", async (req, res) => {
+  try {
+    const {
+      username,
+      petName,
+      type,
+      age,
+      breed,
+      vaccinated,
+      lastVaccination,
+    } = req.body || {};
+
+    if (!username || !petName || !type || !age) {
+      return res.status(400).json({ error: "username, petName, type and age are required." });
+    }
+
+    const db = admin.database();
+    const petRef = db.ref(`Pets/${String(username).trim()}`);
+    const newRef = petRef.push();
+
+    const petData = {
+      petName: String(petName).trim(),
+      type: String(type).trim(),
+      age: String(age).trim(),
+      breed: breed ? String(breed).trim() : "",
+      vaccinated: Boolean(vaccinated),
+      lastVaccination: lastVaccination ? String(lastVaccination).trim() : "",
+      createdAt: Date.now(),
+    };
+
+    await newRef.set(petData);
+
+    res.status(200).json({ message: "Pet saved successfully.", key: newRef.key });
+  } catch (error) {
+    console.error("Error saving pet:", error);
+    res.status(500).json({ error: "Failed to save pet." });
   }
 });
 
