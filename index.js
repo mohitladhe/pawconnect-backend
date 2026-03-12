@@ -37,7 +37,9 @@ try {
 }
 
 const app = express();
-app.use(express.json());
+// increase JSON body limit to allow base64 image payloads
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(cors());
 
 // Health check endpoint
@@ -357,22 +359,19 @@ app.post("/pets", async (req, res) => {
     let imageUrl = "";
     try {
       if (imageBase64) {
+        console.log(`Received imageBase64 for user=${username}, length=${String(imageBase64).length}`);
         let base64Data = imageBase64;
         let contentType = "image/jpeg";
-        const dataUrlMatch = String(base64Data).match(
-          /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/,
-        );
+        const dataUrlMatch = String(base64Data).match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
         if (dataUrlMatch) {
           contentType = dataUrlMatch[1];
           base64Data = dataUrlMatch[2];
         }
 
         const buffer = Buffer.from(base64Data, "base64");
+        console.log(`Decoded image buffer length=${buffer.length}`);
         const ext = (contentType.split("/")[1] || "jpg").split("+")[0];
-        const bucket =
-          process.env.PETS_S3_BUCKET ||
-          process.env.S3_BUCKET ||
-          "pawconnect-profile-images";
+        const bucket = process.env.PETS_S3_BUCKET || process.env.S3_BUCKET || "pawconnect-profile-images";
         const key = `pets/${String(username).trim()}_${Date.now()}.${ext}`;
 
         const putParams = {
@@ -380,14 +379,18 @@ app.post("/pets", async (req, res) => {
           Key: key,
           Body: buffer,
           ContentType: contentType,
-          ACL: "public-read",
+          ACL: "bucket-owner-full-control",
         };
 
-        await s3Client.send(new PutObjectCommand(putParams));
+        const putResult = await s3Client.send(new PutObjectCommand(putParams));
+        console.log("S3 putResult:", putResult);
 
         // Construct a public URL for the uploaded object
         const region = process.env.AWS_REGION || "us-east-1";
         imageUrl = `https://${bucket}.s3.${region}.amazonaws.com/${key}`;
+        console.log(`Uploaded image to ${imageUrl}`);
+      } else {
+        console.log(`No imageBase64 provided for user=${username}`);
       }
     } catch (uploadErr) {
       console.error("S3 upload failed:", uploadErr);
