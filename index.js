@@ -416,6 +416,38 @@ app.post("/pets", async (req, res) => {
   }
 });
 
+// Get Pets for a username - GET /pets/:username
+app.get("/pets/:username", async (req, res) => {
+  try {
+    const username = String(req.params.username || "").trim();
+    if (!username) return res.status(400).json({ error: "username is required in path" });
+
+    const db = admin.database();
+    const ref = db.ref(`Pets/${username}`);
+    const snapshot = await ref.once("value");
+
+    const pets = [];
+    snapshot.forEach((child) => {
+      const val = child.val() || {};
+      pets.push({
+        id: child.key,
+        petName: val.petName || "",
+        imageUrl: val.imageUrl || "",
+        breed: val.breed || "",
+        age: val.age || "",
+        vaccinated: !!val.vaccinated,
+        lastVaccination: val.lastVaccination || "",
+        createdAt: val.createdAt || null,
+      });
+    });
+
+    res.status(200).json({ pets });
+  } catch (error) {
+    console.error("Error fetching pets:", error);
+    res.status(500).json({ error: "Failed to fetch pets." });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
